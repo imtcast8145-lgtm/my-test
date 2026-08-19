@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>유료방송 재산상황 비교분석 | Tcast</title>
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="config.js"></script>
+<style>
+  :root {
+    --pink1: #ec1e79; --pink2: #c2116b; --pink1-d: #c2116b; --pink2-d: #8e0e50;
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c1c1e; --sub: #6b6f76; --border: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16171a; --card: #212227; --text: #f0f0f2; --sub: #a2a5ad; --border: #34363c; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: 'Pretendard', -apple-system, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    background: linear-gradient(135deg, var(--pink1), var(--pink2));
+    color: #fff; padding: 20px 16px; text-align: center;
+  }
+  @media (prefers-color-scheme: dark) {
+    header { background: linear-gradient(135deg, var(--pink1-d), var(--pink2-d)); }
+  }
+  header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  header p { margin: 6px 0 0; font-size: 12px; opacity: 0.9; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; color: var(--text); }
+  .filters { display: flex; flex-wrap: wrap; gap: 16px; }
+  .filter-group { flex: 1; min-width: 220px; }
+  .filter-group label { display: block; font-size: 12px; color: var(--sub); margin-bottom: 6px; font-weight: 600; }
+  .chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);
+    background: var(--bg); font-size: 13px; cursor: pointer; user-select: none; color: var(--text);
+  }
+  .chip.active { background: var(--pink1); border-color: var(--pink1); color: #fff; }
+  select, .unit-toggle {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); font-size: 13px; font-family: inherit;
+  }
+  .unit-toggle { display: flex; gap: 6px; width: auto; }
+  .unit-btn {
+    padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg);
+    font-size: 13px; cursor: pointer; color: var(--text);
+  }
+  .unit-btn.active { background: var(--pink1); border-color: var(--pink1); color: #fff; }
+  canvas { max-height: 380px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--sub); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+  tbody tr:hover { background: rgba(236,30,121,0.06); }
+  .table-wrap { max-height: 420px; overflow: auto; }
+  .empty { text-align: center; color: var(--sub); padding: 40px 0; font-size: 13px; }
+  footer { text-align: center; padding: 24px 16px; color: var(--sub); font-size: 12px; }
+  .company-color { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📊 유료방송 재산상황 비교분석</h1>
+  <p>IPTV·SO·PP 사업자 재무 데이터 (방송미디어통신위원회 재산상황공표집 기준) · 페이지 만든이: Tcast 매체영업팀</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>필터</h2>
+    <div class="filters">
+      <div class="filter-group">
+        <label>사업자 (복수 선택 가능)</label>
+        <div class="chip-group" id="companyChips"></div>
+      </div>
+      <div class="filter-group">
+        <label>항목</label>
+        <select id="metricSelect"></select>
+      </div>
+      <div class="filter-group" style="flex: 0 0 auto; min-width: 140px;">
+        <label>단위</label>
+        <div class="unit-toggle">
+          <button class="unit-btn active" data-unit="100000000">억원</button>
+          <button class="unit-btn" data-unit="1000">백만원</button>
+          <button class="unit-btn" data-unit="1">천원</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 id="chartTitle">연도별 추이</h2>
+    <canvas id="trendChart"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>전체 데이터</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>사업자</th><th>구분</th><th>연도</th><th>항목</th><th>값</th></tr>
+        </thead>
+        <tbody id="dataTableBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyMsg" style="display:none;">데이터가 없습니다. Supabase에 SQL이 실행되었는지 확인해주세요.</div>
+  </div>
+</main>
+
+<footer>Tcast 매체영업팀 · 데이터 출처: 방송미디어통신위원회 방송사업자 재산상황공표집</footer>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+const METRIC_GROUPS = {
+  "매출 지표": ["매출액", "방송사업매출액", "유료방송수신료매출액", "기본채널수신료매출액", "유료채널수신료매출액",
+    "유료VOD수신료매출액", "광고매출액", "홈쇼핑송출수수료매출액", "가입및시설설치매출액", "단말장치대여매출액",
+    "기타방송사업매출액", "기타사업매출액"],
+  "손익 지표": ["방송프로그램사용료", "영업손익", "당기순손익"],
+  "재무상태": ["자산총계", "부채총계", "자본총계"]
+};
+
+const COLORS = ["#ec1e79", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00acc1", "#6d4c41", "#546e7a"];
+
+let companies = [];
+let financials = [];
+let selectedCompanyIds = new Set();
+let currentMetric = "매출액";
+let currentUnit = 100000000; // 억원
+let chart = null;
+
+async function init() {
+  const { data: companyData, error: cErr } = await supabase.from('companies').select('*').order('category').order('name');
+  const { data: finData, error: fErr } = await supabase.from('financial_yearly').select('*');
+
+  if (cErr || fErr) {
+    document.getElementById('emptyMsg').style.display = 'block';
+    document.getElementById('emptyMsg').textContent = '데이터 로드 오류: ' + (cErr?.message || fErr?.message);
+    return;
+  }
+
+  companies = companyData || [];
+  financials = finData || [];
+  selectedCompanyIds = new Set(companies.map(c => c.id));
+
+  renderCompanyChips();
+  renderMetricSelect();
+  render();
+}
+
+function renderCompanyChips() {
+  const wrap = document.getElementById('companyChips');
+  wrap.innerHTML = '';
+  companies.forEach((c, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip active';
+    chip.innerHTML = `<span class="company-color" style="background:${COLORS[i % COLORS.length]}"></span>${c.name}`;
+    chip.onclick = () => {
+      if (selectedCompanyIds.has(c.id)) { selectedCompanyIds.delete(c.id); chip.classList.remove('active'); }
+      else { selectedCompanyIds.add(c.id); chip.classList.add('active'); }
+      render();
+    };
+    wrap.appendChild(chip);
+  });
+}
+
+function renderMetricSelect() {
+  const sel = document.getElementById('metricSelect');
+  sel.innerHTML = '';
+  Object.entries(METRIC_GROUPS).forEach(([group, metrics]) => {
+    const og = document.createElement('optgroup');
+    og.label = group;
+    metrics.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      if (m === currentMetric) opt.selected = true;
+      og.appendChild(opt);
+    });
+    sel.appendChild(og);
+  });
+  sel.onchange = () => { currentMetric = sel.value; render(); };
+}
+
+document.querySelectorAll('.unit-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.unit-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentUnit = Number(btn.dataset.unit);
+    render();
+  };
+});
+
+function unitLabel() {
+  if (currentUnit === 100000000) return '억원';
+  if (currentUnit === 1000) return '백만원';
+  return '천원';
+}
+
+function render() {
+  renderChart();
+  renderTable();
+}
+
+function renderChart() {
+  const ctx = document.getElementById('trendChart');
+  const years = [...new Set(financials.map(f => f.year))].sort();
+  const selectedCompanies = companies.filter(c => selectedCompanyIds.has(c.id));
+
+  const datasets = selectedCompanies.map((c, i) => {
+    const colorIdx = companies.indexOf(c);
+    const data = years.map(y => {
+      const row = financials.find(f => f.company_id === c.id && f.year === y && f.metric_name === currentMetric);
+      return row ? row.value / currentUnit : null;
+    });
+    return {
+      label: c.name,
+      data,
+      borderColor: COLORS[colorIdx % COLORS.length],
+      backgroundColor: COLORS[colorIdx % COLORS.length] + '22',
+      tension: 0.25,
+      spanGaps: true,
+    };
+  });
+
+  document.getElementById('chartTitle').textContent = `${currentMetric} 연도별 추이 (단위: ${unitLabel()})`;
+
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: years, datasets },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { ticks: { callback: v => v.toLocaleString() } } }
+    }
+  });
+}
+
+function renderTable() {
+  const tbody = document.getElementById('dataTableBody');
+  const selectedCompanies = companies.filter(c => selectedCompanyIds.has(c.id));
+  const rows = financials
+    .filter(f => selectedCompanyIds.has(f.company_id) && f.metric_name === currentMetric)
+    .sort((a, b) => b.year - a.year || a.company_id - b.company_id);
+
+  tbody.innerHTML = '';
+  document.getElementById('emptyMsg').style.display = rows.length === 0 ? 'block' : 'none';
+
+  rows.forEach(r => {
+    const c = companies.find(c => c.id === r.company_id);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${c ? c.name : '-'}</td><td>${c ? c.category : '-'}</td><td>${r.year}</td><td>${r.metric_name}</td><td>${(r.value / currentUnit).toLocaleString(undefined, {maximumFractionDigits: 1})}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
