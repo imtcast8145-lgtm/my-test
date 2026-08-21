@@ -112,11 +112,11 @@
   </div>
 
   <div class="card">
-    <h2>전체 데이터</h2>
+    <h2 id="tableTitle">전체 데이터</h2>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>사업자</th><th>구분</th><th>연도</th><th>항목</th><th>값</th></tr>
+          <tr id="dataTableHead"></tr>
         </thead>
         <tbody id="dataTableBody"></tbody>
       </table>
@@ -335,27 +335,35 @@ function renderChart() {
   });
 }
 
+// 표는 "사업자별 1행 + 연도별 열"로 피벗해서, 한 사업자의 연도별 흐름을 한 줄에서 바로 볼 수 있게 한다.
 function renderTable() {
+  const thead = document.getElementById('dataTableHead');
   const tbody = document.getElementById('dataTableBody');
-  const years = [...new Set(financials.map(f => f.year))].sort((a, b) => b - a);
+  const years = [...new Set(financials.map(f => f.year))].sort();
   const selected = currentSeries.filter(s => selectedSeriesIds.has(s.id));
 
-  const rows = [];
-  selected.forEach(s => {
-    years.forEach(y => {
-      const v = seriesValue(s, y);
-      if (v !== null) rows.push({ label: s.label, category: currentCategory === '전체' ? '' : currentCategory, year: y, value: v });
-    });
-  });
+  document.getElementById('tableTitle').textContent =
+    `전체 데이터 · ${currentMetric} (단위: ${unitLabel()})`;
+
+  thead.innerHTML = '<th>사업자</th><th>구분</th>' + years.map(y => `<th>${y}</th>`).join('');
 
   tbody.innerHTML = '';
-  document.getElementById('emptyMsg').style.display = rows.length === 0 ? 'block' : 'none';
+  let anyRow = false;
 
-  rows.forEach(r => {
+  selected.forEach(s => {
+    const values = years.map(y => seriesValue(s, y));
+    if (values.every(v => v === null)) return; // 데이터가 하나도 없는 사업자는 표에서 생략
+    anyRow = true;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${r.label}</td><td>${r.category}</td><td>${r.year}</td><td>${currentMetric}</td><td>${(r.value / currentUnit).toLocaleString(undefined, {maximumFractionDigits: 1})}</td>`;
+    const catCell = currentCategory === '전체' ? '' : currentCategory;
+    const valueCells = values.map(v =>
+      `<td>${v === null ? '-' : (v / currentUnit).toLocaleString(undefined, { maximumFractionDigits: 1 })}</td>`
+    ).join('');
+    tr.innerHTML = `<td>${s.label}</td><td>${catCell}</td>${valueCells}`;
     tbody.appendChild(tr);
   });
+
+  document.getElementById('emptyMsg').style.display = anyRow ? 'none' : 'block';
 }
 
 init();
