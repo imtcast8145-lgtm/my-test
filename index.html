@@ -44,6 +44,13 @@
     background: var(--bg); font-size: 13px; cursor: pointer; user-select: none; color: var(--text);
   }
   .chip.active { background: var(--pink1); border-color: var(--pink1); color: #fff; }
+  .cat-btn {
+    padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); font-size: 13px; cursor: pointer; color: var(--text); font-weight: 600;
+  }
+  .cat-btn.active { background: var(--pink1); border-color: var(--pink1); color: #fff; }
+  .cat-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .group-hint { font-size: 11px; color: var(--sub); margin: -4px 0 8px; }
   select, .unit-toggle {
     width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--card); color: var(--text); font-size: 13px; font-family: inherit;
@@ -77,8 +84,11 @@
   <div class="card">
     <h2>필터</h2>
     <div class="filters">
-      <div class="filter-group">
+      <div class="filter-group" style="flex-basis:100%;">
+        <label>구분</label>
+        <div class="cat-row" id="categoryRow"></div>
         <label>사업자 (복수 선택 가능)</label>
+        <div class="group-hint" id="groupHint" style="display:none;">SO는 계열사별로 묶어서 합계로 보여드려요. 묶이지 않은 개별 케이블사업자는 "기타(개별SO)"로 합산됩니다.</div>
         <div class="chip-group" id="companyChips"></div>
       </div>
       <div class="filter-group">
@@ -88,7 +98,7 @@
       <div class="filter-group" style="flex: 0 0 auto; min-width: 140px;">
         <label>단위</label>
         <div class="unit-toggle">
-          <button class="unit-btn active" data-unit="100000000">억원</button>
+          <button class="unit-btn active" data-unit="100000">억원</button>
           <button class="unit-btn" data-unit="1000">백만원</button>
           <button class="unit-btn" data-unit="1">천원</button>
         </div>
@@ -132,46 +142,114 @@ const METRIC_GROUPS = {
 
 const COLORS = ["#ec1e79", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00acc1", "#6d4c41", "#546e7a"];
 
+// SO 계열사 그룹핑: 상호변경(현대HCN→HCN→KT HCN 등)까지 반영해서 실제 같은 계열끼리 묶음
+const SO_GROUP_ORDER = ["딜라이브", "CMB", "HCN", "LG헬로비전", "SK브로드밴드", "기타(개별SO)"];
+const SO_GROUP_RULES = [
+  ["딜라이브", n => n.startsWith("(주)딜라이브")],
+  ["CMB", n => n.startsWith("(주)씨엠비")],
+  ["HCN", n => n.startsWith("(주)에이치씨엔") || n.startsWith("(주)케이티에이치씨엔") || n.startsWith("(주)현대에이치씨엔")],
+  ["LG헬로비전", n => n.startsWith("(주)엘지헬로비전")],
+  ["SK브로드밴드", n => n.startsWith("에스케이브로드밴드(주)") || n === "브로드밴드노원방송"],
+];
+function soGroupOf(name) {
+  for (const [g, test] of SO_GROUP_RULES) if (test(name)) return g;
+  return "기타(개별SO)";
+}
+
+const CATEGORIES = ["전체", "IPTV", "SO", "PP"];
+
 let companies = [];
 let financials = [];
-let selectedCompanyIds = new Set();
+let currentCategory = "전체";
+let currentSeries = [];          // 현재 카테고리에서 렌더링 대상인 시리즈(개별 회사 또는 SO 그룹) 목록
+let selectedSeriesIds = new Set();
 let currentMetric = "매출액";
-let currentUnit = 100000000; // 억원
+let currentUnit = 100000; // 억원
 let chart = null;
 
-async function init() {
+async function initData() {
   const { data: companyData, error: cErr } = await supabase.from('companies').select('*').order('category').order('name');
   const { data: finData, error: fErr } = await supabase.from('financial_yearly').select('*');
 
   if (cErr || fErr) {
     document.getElementById('emptyMsg').style.display = 'block';
     document.getElementById('emptyMsg').textContent = '데이터 로드 오류: ' + (cErr?.message || fErr?.message);
-    return;
+    return false;
   }
-
   companies = companyData || [];
   financials = finData || [];
-  selectedCompanyIds = new Set(companies.map(c => c.id));
+  return true;
+}
 
-  renderCompanyChips();
-  renderMetricSelect();
-  render();
+// 카테고리(전체/IPTV/SO/PP)에 맞는 "시리즈" 목록을 만든다.
+// 시리즈 = 차트/표에 한 줄로 나오는 단위. 보통은 회사 1개 = 시리즈 1개지만,
+// SO는 계열사 그룹 1개 = 시리즈 1개(구성 회사들의 값을 합산)로 만든다.
+function buildSeries(category) {
+  if (category === "SO") {
+    const buckets = {};
+    companies.forEach(c => {
+      if (c.category !== "SO" || c.name.endsWith("합계")) return;
+      const g = soGroupOf(c.name);
+      (buckets[g] = buckets[g] || []).push(c.id);
+    });
+    const series = SO_GROUP_ORDER.filter(g => buckets[g]).map(g => ({
+      id: "grp:" + g, label: g, companyIds: buckets[g]
+    }));
+    const total = companies.find(c => c.category === "SO" && c.name.endsWith("합계"));
+    if (total) series.unshift({ id: "c:" + total.id, label: total.name, companyIds: [total.id] });
+    return series;
+  }
+  const pool = category === "전체" ? companies : companies.filter(c => c.category === category);
+  return pool.map(c => ({ id: "c:" + c.id, label: c.name, companyIds: [c.id] }));
+}
+
+function renderCategoryRow() {
+  const wrap = document.getElementById("categoryRow");
+  wrap.innerHTML = "";
+  CATEGORIES.forEach(cat => {
+    const btn = document.createElement("button");
+    btn.className = "cat-btn" + (cat === currentCategory ? " active" : "");
+    btn.textContent = cat;
+    btn.onclick = () => {
+      currentCategory = cat;
+      currentSeries = buildSeries(currentCategory);
+      selectedSeriesIds = new Set(currentSeries.map(s => s.id));
+      document.getElementById("groupHint").style.display = cat === "SO" ? "block" : "none";
+      renderCategoryRow();
+      renderCompanyChips();
+      render();
+    };
+    wrap.appendChild(btn);
+  });
 }
 
 function renderCompanyChips() {
   const wrap = document.getElementById('companyChips');
   wrap.innerHTML = '';
-  companies.forEach((c, i) => {
+  currentSeries.forEach((s, i) => {
     const chip = document.createElement('div');
-    chip.className = 'chip active';
-    chip.innerHTML = `<span class="company-color" style="background:${COLORS[i % COLORS.length]}"></span>${c.name}`;
+    chip.className = 'chip' + (selectedSeriesIds.has(s.id) ? ' active' : '');
+    chip.innerHTML = `<span class="company-color" style="background:${COLORS[i % COLORS.length]}"></span>${s.label}`;
     chip.onclick = () => {
-      if (selectedCompanyIds.has(c.id)) { selectedCompanyIds.delete(c.id); chip.classList.remove('active'); }
-      else { selectedCompanyIds.add(c.id); chip.classList.add('active'); }
+      if (selectedSeriesIds.has(s.id)) { selectedSeriesIds.delete(s.id); chip.classList.remove('active'); }
+      else { selectedSeriesIds.add(s.id); chip.classList.add('active'); }
       render();
     };
     wrap.appendChild(chip);
   });
+}
+
+async function init() {
+  const ok = await initData();
+  if (!ok) return;
+
+  currentSeries = buildSeries(currentCategory);
+  selectedSeriesIds = new Set(currentSeries.map(s => s.id));
+
+  renderCategoryRow();
+  renderCompanyChips();
+  renderMetricSelect();
+  render();
 }
 
 function renderMetricSelect() {
@@ -201,7 +279,7 @@ document.querySelectorAll('.unit-btn').forEach(btn => {
 });
 
 function unitLabel() {
-  if (currentUnit === 100000000) return '억원';
+  if (currentUnit === 100000) return '억원';
   if (currentUnit === 1000) return '백만원';
   return '천원';
 }
@@ -211,19 +289,29 @@ function render() {
   renderTable();
 }
 
+// 시리즈(회사 1개 또는 SO 그룹)의 특정 연도·항목 합계값. 구성 회사 중 값이 하나도 없으면 null(빈 구간).
+function seriesValue(series, year) {
+  let sum = 0, found = false;
+  for (const cid of series.companyIds) {
+    const row = financials.find(f => f.company_id === cid && f.year === year && f.metric_name === currentMetric);
+    if (row) { sum += Number(row.value); found = true; }
+  }
+  return found ? sum : null;
+}
+
 function renderChart() {
   const ctx = document.getElementById('trendChart');
   const years = [...new Set(financials.map(f => f.year))].sort();
-  const selectedCompanies = companies.filter(c => selectedCompanyIds.has(c.id));
+  const selected = currentSeries.filter(s => selectedSeriesIds.has(s.id));
 
-  const datasets = selectedCompanies.map((c, i) => {
-    const colorIdx = companies.indexOf(c);
+  const datasets = selected.map((s, i) => {
+    const colorIdx = currentSeries.indexOf(s);
     const data = years.map(y => {
-      const row = financials.find(f => f.company_id === c.id && f.year === y && f.metric_name === currentMetric);
-      return row ? row.value / currentUnit : null;
+      const v = seriesValue(s, y);
+      return v === null ? null : v / currentUnit;
     });
     return {
-      label: c.name,
+      label: s.label,
       data,
       borderColor: COLORS[colorIdx % COLORS.length],
       backgroundColor: COLORS[colorIdx % COLORS.length] + '22',
@@ -232,7 +320,8 @@ function renderChart() {
     };
   });
 
-  document.getElementById('chartTitle').textContent = `${currentMetric} 연도별 추이 (단위: ${unitLabel()})`;
+  const catLabel = currentCategory === '전체' ? '' : `[${currentCategory}] `;
+  document.getElementById('chartTitle').textContent = `${catLabel}${currentMetric} 연도별 추이 (단위: ${unitLabel()})`;
 
   if (chart) chart.destroy();
   chart = new Chart(ctx, {
@@ -248,18 +337,23 @@ function renderChart() {
 
 function renderTable() {
   const tbody = document.getElementById('dataTableBody');
-  const selectedCompanies = companies.filter(c => selectedCompanyIds.has(c.id));
-  const rows = financials
-    .filter(f => selectedCompanyIds.has(f.company_id) && f.metric_name === currentMetric)
-    .sort((a, b) => b.year - a.year || a.company_id - b.company_id);
+  const years = [...new Set(financials.map(f => f.year))].sort((a, b) => b - a);
+  const selected = currentSeries.filter(s => selectedSeriesIds.has(s.id));
+
+  const rows = [];
+  selected.forEach(s => {
+    years.forEach(y => {
+      const v = seriesValue(s, y);
+      if (v !== null) rows.push({ label: s.label, category: currentCategory === '전체' ? '' : currentCategory, year: y, value: v });
+    });
+  });
 
   tbody.innerHTML = '';
   document.getElementById('emptyMsg').style.display = rows.length === 0 ? 'block' : 'none';
 
   rows.forEach(r => {
-    const c = companies.find(c => c.id === r.company_id);
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${c ? c.name : '-'}</td><td>${c ? c.category : '-'}</td><td>${r.year}</td><td>${r.metric_name}</td><td>${(r.value / currentUnit).toLocaleString(undefined, {maximumFractionDigits: 1})}</td>`;
+    tr.innerHTML = `<td>${r.label}</td><td>${r.category}</td><td>${r.year}</td><td>${currentMetric}</td><td>${(r.value / currentUnit).toLocaleString(undefined, {maximumFractionDigits: 1})}</td>`;
     tbody.appendChild(tr);
   });
 }
